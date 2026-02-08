@@ -61,8 +61,12 @@ class EventBatcher:
         self._queue.append(event)
 
         if len(self._queue) >= self._max_batch_size:
-            # Schedule an immediate flush
-            asyncio.create_task(self.flush())
+            # Schedule an immediate flush if an event loop is running
+            try:
+                asyncio.get_running_loop()
+                asyncio.create_task(self.flush())
+            except RuntimeError:
+                pass  # No running event loop, timer flush will handle it
 
     async def flush(self) -> None:
         """Flush pending events to the ingestion API."""

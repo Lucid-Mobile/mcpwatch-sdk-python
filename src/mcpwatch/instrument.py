@@ -115,18 +115,31 @@ def instrument(
 
         setattr(server, "resource", wrapped_resource)
 
-    # Start the batcher background loop
+    # Start the batcher background loop.
+    # The batcher.start() call creates an asyncio.Task, so it must be called
+    # when an event loop is running. If no loop is running yet, we defer
+    # starting to the first add() call by wrapping add().
     try:
         import asyncio
 
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            batcher.start()
-        else:
-            loop.run_until_complete(asyncio.coroutine(batcher.start)())
+        loop = asyncio.get_running_loop()
+        # If we got here, a loop is running -- safe to start now
+        batcher.start()
     except RuntimeError:
-        # No event loop available yet, will start on first use
-        pass
+        # No running event loop yet. Wrap batcher.add to lazily start
+        # the flush loop on the first event.
+        _original_add = batcher.add
+
+        def _lazy_start_add(event: Any) -> None:
+            if not batcher._running:
+                try:
+                    asyncio.get_running_loop()
+                    batcher.start()
+                except RuntimeError:
+                    pass
+            _original_add(event)
+
+        batcher.add = _lazy_start_add  # type: ignore
 
     if debug:
         logger.info(f"Instrumented server '{server_name}' v{server_version}")
