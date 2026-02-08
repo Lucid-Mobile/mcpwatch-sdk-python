@@ -2,16 +2,63 @@
 
 from __future__ import annotations
 
+import atexit
+import functools
 import logging
 from typing import Any, TypeVar
 
 from mcpwatch.batcher import EventBatcher
 from mcpwatch.interceptors import wrap_tool_handler, wrap_resource_handler
-from mcpwatch.utils import generate_trace_id
+from mcpwatch.transport import detect_transport_type
+from mcpwatch.types import EventType, McpWatchEvent
+from mcpwatch.utils import generate_id, generate_span_id, generate_trace_id, now_iso
 
 logger = logging.getLogger("mcpwatch")
 
 T = TypeVar("T")
+
+
+def _extract_server_name(server: Any) -> str:
+    """Try multiple attributes to find the server name."""
+    for attr in ("name", "_name", "server_name", "_server_name"):
+        val = getattr(server, attr, None)
+        if val and isinstance(val, str):
+            return val
+
+    # Check for a server_info dict/object
+    info = getattr(server, "server_info", None)
+    if info is not None:
+        if isinstance(info, dict):
+            name = info.get("name")
+            if name:
+                return str(name)
+        else:
+            name = getattr(info, "name", None)
+            if name:
+                return str(name)
+
+    return "unknown"
+
+
+def _extract_server_version(server: Any) -> str:
+    """Try multiple attributes to find the server version."""
+    for attr in ("version", "_version", "server_version", "_server_version"):
+        val = getattr(server, attr, None)
+        if val and isinstance(val, str):
+            return val
+
+    info = getattr(server, "server_info", None)
+    if info is not None:
+        if isinstance(info, dict):
+            version = info.get("version")
+            if version:
+                return str(version)
+        else:
+            version = getattr(info, "version", None)
+            if version:
+                return str(version)
+
+    return "unknown"
 
 
 def instrument(
@@ -54,9 +101,10 @@ def instrument(
         flush_interval=flush_interval,
     )
 
-    # Extract server info
-    server_name = getattr(server, "name", "unknown")
-    server_version = getattr(server, "version", "unknown")
+    # Extract server info using multi-attribute lookup
+    server_name = _extract_server_name(server)
+    server_version = _extract_server_version(server)
+    transport_type = detect_transport_type(server)
     trace_id = generate_trace_id()
 
     # Store original methods
@@ -115,6 +163,65 @@ def instrument(
 
         setattr(server, "resource", wrapped_resource)
 
+    # ---- Lifecycle: wrap server.run() to emit initialize event ----
+    original_run = getattr(server, "run", None)
+    if original_run is not None and callable(original_run):
+
+        @functools.wraps(original_run)
+        async def wrapped_run(*args: Any, **kwargs: Any) -> Any:
+            # Emit initialize event
+            init_event = McpWatchEvent(
+                event_id=generate_id(),
+                trace_id=trace_id,
+                span_id=generate_span_id(),
+                event_type=EventType.INITIALIZE,
+                event_name="server.initialize",
+                mcp_method="initialize",
+                started_at=now_iso(),
+                ended_at=now_iso(),
+                server_name=server_name,
+                server_version=server_version,
+                transport_type=transport_type,
+            )
+            batcher.add(init_event)
+
+            return await original_run(*args, **kwargs)
+
+        setattr(server, "run", wrapped_run)
+
+    # ---- Lifecycle: atexit handler for close event ----
+    def _emit_close_event() -> None:
+        """Best-effort close event emitted when the process exits."""
+        close_event = McpWatchEvent(
+            event_id=generate_id(),
+            trace_id=trace_id,
+            span_id=generate_span_id(),
+            event_type=EventType.CLOSE,
+            event_name="server.close",
+            mcp_method="close",
+            started_at=now_iso(),
+            ended_at=now_iso(),
+            server_name=server_name,
+            server_version=server_version,
+            transport_type=transport_type,
+        )
+        batcher.add(close_event)
+
+        # Try to flush synchronously if possible
+        import asyncio
+
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(batcher.flush())
+        except RuntimeError:
+            # No running event loop -- run a quick flush
+            try:
+                asyncio.run(batcher.flush())
+            except Exception:
+                pass
+
+    atexit.register(_emit_close_event)
+
     # Start the batcher background loop.
     # The batcher.start() call creates an asyncio.Task, so it must be called
     # when an event loop is running. If no loop is running yet, we defer
@@ -128,6 +235,8 @@ def instrument(
     except RuntimeError:
         # No running event loop yet. Wrap batcher.add to lazily start
         # the flush loop on the first event.
+        import asyncio
+
         _original_add = batcher.add
 
         def _lazy_start_add(event: Any) -> None:
@@ -142,6 +251,6 @@ def instrument(
         batcher.add = _lazy_start_add  # type: ignore
 
     if debug:
-        logger.info(f"Instrumented server '{server_name}' v{server_version}")
+        logger.info(f"Instrumented server '{server_name}' v{server_version} (transport={transport_type})")
 
     return server

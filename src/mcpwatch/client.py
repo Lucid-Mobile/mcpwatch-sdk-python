@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import sys
 
@@ -15,6 +16,11 @@ DEFAULT_ENDPOINT = "https://ingest.mcpwatch.dev"
 SDK_NAME = "mcpwatch-python"
 SDK_VERSION = "0.1.0"
 
+# Retry configuration
+MAX_RETRIES = 1
+RETRY_DELAY_SECONDS = 1.0
+REQUEST_TIMEOUT_SECONDS = 10.0
+
 
 class MCPWatchClient:
     """HTTP client that sends batched events to the MCPWatch ingestion API."""
@@ -24,7 +30,7 @@ class MCPWatchClient:
         self.endpoint = endpoint.rstrip("/")
         self.debug = debug
         self._client = httpx.AsyncClient(
-            timeout=10.0,
+            timeout=REQUEST_TIMEOUT_SECONDS,
             headers={
                 "Content-Type": "application/json",
                 "Authorization": f"Bearer {api_key}",
@@ -32,7 +38,12 @@ class MCPWatchClient:
         )
 
     async def send_batch(self, events: list[McpWatchEvent]) -> IngestResponse | None:
-        """Send a batch of events to the ingestion API."""
+        """Send a batch of events to the ingestion API.
+
+        On failure, retries once after a 1-second delay.  If the retry also
+        fails the batch is silently dropped so SDK usage never blocks the
+        host MCP server.
+        """
         if not events:
             return None
 
@@ -46,26 +57,38 @@ class MCPWatchClient:
             ),
         )
 
-        try:
-            response = await self._client.post(
-                f"{self.endpoint}/v1/events",
-                content=request.model_dump_json(),
-            )
+        last_error: Exception | None = None
 
-            if response.status_code != 202:
+        for attempt in range(1 + MAX_RETRIES):
+            try:
+                response = await self._client.post(
+                    f"{self.endpoint}/v1/events",
+                    content=request.model_dump_json(),
+                )
+
+                if response.status_code != 202:
+                    if self.debug:
+                        logger.error(f"Ingestion failed: {response.status_code} {response.text}")
+                    return None
+
+                result = IngestResponse.model_validate_json(response.content)
                 if self.debug:
-                    logger.error(f"Ingestion failed: {response.status_code} {response.text}")
-                return None
+                    logger.info(f"Sent {result.accepted} events")
+                return result
 
-            result = IngestResponse.model_validate_json(response.content)
-            if self.debug:
-                logger.info(f"Sent {result.accepted} events")
-            return result
+            except Exception as e:
+                last_error = e
+                if attempt < MAX_RETRIES:
+                    if self.debug:
+                        logger.warning(
+                            f"Send attempt {attempt + 1} failed ({e}), retrying in {RETRY_DELAY_SECONDS}s"
+                        )
+                    await asyncio.sleep(RETRY_DELAY_SECONDS)
 
-        except Exception as e:
-            if self.debug:
-                logger.error(f"Failed to send events: {e}")
-            return None
+        # All attempts exhausted -- drop the batch
+        if self.debug and last_error is not None:
+            logger.error(f"Failed to send events after {1 + MAX_RETRIES} attempts: {last_error}")
+        return None
 
     async def close(self) -> None:
         """Close the HTTP client."""

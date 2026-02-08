@@ -2,6 +2,7 @@
 
 from mcpwatch.instrument import instrument
 from mcpwatch.client import MCPWatchClient
+from mcpwatch.transport import detect_transport_type
 
-__all__ = ["instrument", "MCPWatchClient"]
+__all__ = ["instrument", "MCPWatchClient", "detect_transport_type"]
 __version__ = "0.1.0"
