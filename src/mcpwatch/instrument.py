@@ -1,0 +1,134 @@
+"""Main instrument() function for wrapping MCP servers."""
+
+from __future__ import annotations
+
+import logging
+from typing import Any, TypeVar
+
+from mcpwatch.batcher import EventBatcher
+from mcpwatch.interceptors import wrap_tool_handler, wrap_resource_handler
+from mcpwatch.utils import generate_trace_id
+
+logger = logging.getLogger("mcpwatch")
+
+T = TypeVar("T")
+
+
+def instrument(
+    server: T,
+    *,
+    api_key: str,
+    endpoint: str = "https://ingest.mcpwatch.dev",
+    debug: bool = False,
+    sample_rate: float = 1.0,
+    max_batch_size: int = 50,
+    flush_interval: float = 1.0,
+) -> T:
+    """
+    Instrument an MCP server for observability.
+
+    Wraps the server's tool and resource registration methods to automatically
+    capture all interactions and send them to MCPWatch.
+
+    Args:
+        server: The MCP Server instance to instrument
+        api_key: MCPWatch API key (e.g., "mw_live_...")
+        endpoint: MCPWatch ingestion endpoint URL
+        debug: Enable debug logging
+        sample_rate: Sampling rate from 0.0 to 1.0
+        max_batch_size: Maximum events per batch
+        flush_interval: Seconds between batch flushes
+
+    Returns:
+        The same server instance, now instrumented
+    """
+    if not api_key:
+        logger.warning("No API key provided, instrumentation disabled")
+        return server
+
+    batcher = EventBatcher(
+        api_key=api_key,
+        endpoint=endpoint,
+        debug=debug,
+        max_batch_size=max_batch_size,
+        flush_interval=flush_interval,
+    )
+
+    # Extract server info
+    server_name = getattr(server, "name", "unknown")
+    server_version = getattr(server, "version", "unknown")
+    trace_id = generate_trace_id()
+
+    # Store original methods
+    original_tool = getattr(server, "tool", None)
+    original_resource = getattr(server, "resource", None)
+
+    if original_tool is not None:
+        # Check if tool() is used as a decorator (Python MCP SDK pattern)
+        def wrapped_tool(*args: Any, **kwargs: Any) -> Any:
+            result = original_tool(*args, **kwargs)
+
+            # If used as decorator: @server.tool()
+            if callable(result) and not hasattr(result, "__wrapped_mcpwatch__"):
+                def decorator(handler: Any) -> Any:
+                    tool_name = args[0] if args else kwargs.get("name", handler.__name__)
+                    wrapped_handler = wrap_tool_handler(
+                        handler,
+                        tool_name=str(tool_name),
+                        batcher=batcher,
+                        server_name=server_name,
+                        server_version=server_version,
+                        trace_id=trace_id,
+                        sample_rate=sample_rate,
+                    )
+                    wrapped_handler.__wrapped_mcpwatch__ = True  # type: ignore
+                    return result(wrapped_handler)
+
+                return decorator
+
+            return result
+
+        setattr(server, "tool", wrapped_tool)
+
+    if original_resource is not None:
+        def wrapped_resource(*args: Any, **kwargs: Any) -> Any:
+            result = original_resource(*args, **kwargs)
+
+            if callable(result) and not hasattr(result, "__wrapped_mcpwatch__"):
+                def decorator(handler: Any) -> Any:
+                    resource_name = args[0] if args else kwargs.get("name", handler.__name__)
+                    wrapped_handler = wrap_resource_handler(
+                        handler,
+                        resource_name=str(resource_name),
+                        batcher=batcher,
+                        server_name=server_name,
+                        server_version=server_version,
+                        trace_id=trace_id,
+                        sample_rate=sample_rate,
+                    )
+                    wrapped_handler.__wrapped_mcpwatch__ = True  # type: ignore
+                    return result(wrapped_handler)
+
+                return decorator
+
+            return result
+
+        setattr(server, "resource", wrapped_resource)
+
+    # Start the batcher background loop
+    try:
+        import asyncio
+
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            batcher.start()
+        else:
+            loop.run_until_complete(asyncio.coroutine(batcher.start)())
+    except RuntimeError:
+        # No event loop available yet, will start on first use
+        pass
+
+    if debug:
+        logger.info(f"Instrumented server '{server_name}' v{server_version}")
+
+    return server
