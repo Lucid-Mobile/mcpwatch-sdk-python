@@ -66,15 +66,26 @@ class MCPWatchClient:
                     content=request.model_dump_json(),
                 )
 
-                if response.status_code != 202:
+                if response.status_code == 202:
+                    result = IngestResponse.model_validate_json(response.content)
                     if self.debug:
-                        logger.error(f"Ingestion failed: {response.status_code} {response.text}")
-                    return None
+                        logger.info(f"Sent {result.accepted} events")
+                    return result
 
-                result = IngestResponse.model_validate_json(response.content)
+                # Retry on server errors (5xx); give up immediately on client errors (4xx)
+                if response.status_code >= 500 and attempt < MAX_RETRIES:
+                    if self.debug:
+                        logger.warning(
+                            f"Server error {response.status_code} on attempt {attempt + 1}, "
+                            f"retrying in {RETRY_DELAY_SECONDS}s"
+                        )
+                    last_error = Exception(f"HTTP {response.status_code}: {response.text}")
+                    await asyncio.sleep(RETRY_DELAY_SECONDS)
+                    continue
+
                 if self.debug:
-                    logger.info(f"Sent {result.accepted} events")
-                return result
+                    logger.error(f"Ingestion failed: {response.status_code} {response.text}")
+                return None
 
             except Exception as e:
                 last_error = e

@@ -191,7 +191,13 @@ def instrument(
 
     # ---- Lifecycle: atexit handler for close event ----
     def _emit_close_event() -> None:
-        """Best-effort close event emitted when the process exits."""
+        """Best-effort close event emitted when the process exits.
+
+        At atexit time the async event loop is typically stopped or
+        shutting down, so ``loop.create_task()`` would silently drop the
+        flush.  Instead we always try ``asyncio.run()`` which creates a
+        fresh temporary loop for the final flush.
+        """
         close_event = McpWatchEvent(
             event_id=generate_id(),
             trace_id=trace_id,
@@ -207,18 +213,15 @@ def instrument(
         )
         batcher.add(close_event)
 
-        # Try to flush synchronously if possible
+        # Best-effort synchronous flush with a fresh event loop.
+        # During interpreter shutdown some modules may already be torn
+        # down, so we catch broadly and accept silent failure.
         import asyncio
 
         try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(batcher.flush())
-        except RuntimeError:
-            # No running event loop -- run a quick flush
-            try:
-                asyncio.run(batcher.flush())
-            except Exception:
-                pass
+            asyncio.run(batcher.flush())
+        except Exception:
+            pass
 
     atexit.register(_emit_close_event)
 
