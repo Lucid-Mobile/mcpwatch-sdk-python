@@ -11,6 +11,33 @@ from mcpwatch.types import EventType, McpWatchEvent
 from mcpwatch.utils import generate_id, generate_span_id, now_iso, duration_ms
 
 
+def _try_capture_client_info(server: Any, client_info: dict[str, Any]) -> None:
+    """Best-effort extraction of client name/version from the MCP server's request context."""
+    if client_info.get("_captured"):
+        return
+    try:
+        ctx = getattr(server, "request_context", None)
+        if ctx is None:
+            return
+        session = getattr(ctx, "session", None)
+        if session is None:
+            return
+        # The Python MCP SDK stores client params from the initialize handshake
+        client_params = getattr(session, "_client_params", None) or getattr(
+            session, "client_params", None
+        )
+        if client_params is not None:
+            info = getattr(client_params, "clientInfo", None) or getattr(
+                client_params, "client_info", None
+            )
+            if info is not None:
+                client_info["name"] = getattr(info, "name", "") or ""
+                client_info["version"] = getattr(info, "version", "") or ""
+        client_info["_captured"] = True
+    except Exception:
+        client_info["_captured"] = True
+
+
 def wrap_tool_handler(
     handler: Callable[..., Coroutine[Any, Any, Any]],
     tool_name: str,
@@ -19,8 +46,12 @@ def wrap_tool_handler(
     server_version: str,
     trace_id: str,
     sample_rate: float,
+    server: Any = None,
+    client_info: dict[str, Any] | None = None,
 ) -> Callable[..., Coroutine[Any, Any, Any]]:
     """Wrap a tool handler to capture events."""
+
+    _client_info = client_info or {}
 
     @functools.wraps(handler)
     async def wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -28,6 +59,9 @@ def wrap_tool_handler(
 
         if random.random() > sample_rate:
             return await handler(*args, **kwargs)
+
+        if server is not None:
+            _try_capture_client_info(server, _client_info)
 
         start_time = time.perf_counter()
         event = McpWatchEvent(
@@ -40,6 +74,8 @@ def wrap_tool_handler(
             started_at=now_iso(),
             server_name=server_name,
             server_version=server_version,
+            client_name=_client_info.get("name", ""),
+            client_version=_client_info.get("version", ""),
             request_params=_safe_dict(args[0] if args else kwargs),
         )
 
@@ -75,8 +111,12 @@ def wrap_resource_handler(
     server_version: str,
     trace_id: str,
     sample_rate: float,
+    server: Any = None,
+    client_info: dict[str, Any] | None = None,
 ) -> Callable[..., Coroutine[Any, Any, Any]]:
     """Wrap a resource handler to capture events."""
+
+    _client_info = client_info or {}
 
     @functools.wraps(handler)
     async def wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -84,6 +124,9 @@ def wrap_resource_handler(
 
         if random.random() > sample_rate:
             return await handler(*args, **kwargs)
+
+        if server is not None:
+            _try_capture_client_info(server, _client_info)
 
         start_time = time.perf_counter()
         event = McpWatchEvent(
@@ -96,6 +139,8 @@ def wrap_resource_handler(
             started_at=now_iso(),
             server_name=server_name,
             server_version=server_version,
+            client_name=_client_info.get("name", ""),
+            client_version=_client_info.get("version", ""),
         )
 
         try:

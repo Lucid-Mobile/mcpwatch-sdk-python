@@ -107,6 +107,9 @@ def instrument(
     transport_type = detect_transport_type(server)
     trace_id = generate_trace_id()
 
+    # Shared mutable container for client info, captured on first handler call
+    client_info: dict[str, Any] = {"name": "", "version": ""}
+
     # Store original methods
     original_tool = getattr(server, "tool", None)
     original_resource = getattr(server, "resource", None)
@@ -128,6 +131,8 @@ def instrument(
                         server_version=server_version,
                         trace_id=trace_id,
                         sample_rate=sample_rate,
+                        server=server,
+                        client_info=client_info,
                     )
                     wrapped_handler.__wrapped_mcpwatch__ = True  # type: ignore
                     return result(wrapped_handler)
@@ -153,6 +158,8 @@ def instrument(
                         server_version=server_version,
                         trace_id=trace_id,
                         sample_rate=sample_rate,
+                        server=server,
+                        client_info=client_info,
                     )
                     wrapped_handler.__wrapped_mcpwatch__ = True  # type: ignore
                     return result(wrapped_handler)
