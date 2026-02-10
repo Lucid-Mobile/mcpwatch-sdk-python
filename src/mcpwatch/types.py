@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Any, Callable
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class EventType(str, Enum):
@@ -58,15 +58,26 @@ class IngestRequest(BaseModel):
     sdk: SdkInfo = Field(default_factory=SdkInfo)
 
 
+class QuotaInfo(BaseModel):
+    limit: int
+    remaining: int
+    status: str  # "ok" | "warning" | "exceeded" | "hard_limit"
+    reset: str
+
+
 class IngestResponse(BaseModel):
     accepted: int
     rejected: int
+    quota: QuotaInfo | None = None
 
 
 class MCPWatchConfig(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     api_key: str
     endpoint: str = "https://ingest.mcpwatch.dev"
     debug: bool = False
     sample_rate: float = 1.0
     max_batch_size: int = 50
     flush_interval: float = 1.0
+    on_quota_warning: Callable[[QuotaInfo], None] | None = None

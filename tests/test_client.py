@@ -18,5 +18,7 @@ def test_client_custom_endpoint():
 async def test_send_empty_batch():
     client = MCPWatchClient(api_key="mw_test_key")
     result = await client.send_batch([])
-    assert result is None
+    assert result.response is None
+    assert result.quota_info is None
+    assert result.retry_after is None
     await client.close()
