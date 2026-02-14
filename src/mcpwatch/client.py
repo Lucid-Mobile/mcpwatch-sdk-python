@@ -16,7 +16,7 @@ logger = logging.getLogger("mcpwatch")
 
 DEFAULT_ENDPOINT = "https://ingest.mcpwatch.dev"
 SDK_NAME = "mcpwatch-python"
-SDK_VERSION = "0.1.0"
+SDK_VERSION = "1.0.0"
 
 MAX_RETRIES = 1
 RETRY_DELAY_SECONDS = 1.0

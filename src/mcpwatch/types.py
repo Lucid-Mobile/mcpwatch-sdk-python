@@ -43,12 +43,12 @@ class McpWatchEvent(BaseModel):
     client_version: str = ""
     attributes: dict[str, str] = Field(default_factory=dict)
     sdk_name: str = "mcpwatch-python"
-    sdk_version: str = "0.1.0"
+    sdk_version: str = "1.0.0"
 
 
 class SdkInfo(BaseModel):
     name: str = "mcpwatch-python"
-    version: str = "0.1.0"
+    version: str = "1.0.0"
     runtime: str = "python"
     runtime_version: str = ""
 

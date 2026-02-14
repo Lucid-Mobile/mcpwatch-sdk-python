@@ -7,3 +7,8 @@ dist/
 .venv/
 venv/
 uv.lock
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo

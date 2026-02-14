@@ -1,9 +1,13 @@
 [project]
 name = "mcpwatch"
-version = "0.1.0"
+version = "1.0.0"
 description = "MCPWatch SDK for MCP server observability"
 license = "MIT"
+readme = "README.md"
 requires-python = ">=3.10"
+authors = [{ name = "Lucid Mobile LLC" }]
+keywords = ["mcp", "observability", "model-context-protocol", "sdk", "mcpwatch"]
+classifiers = ["Programming Language :: Python :: 3", "License :: OSI Approved :: MIT License"]
 dependencies = [
     "httpx>=0.28",
     "pydantic>=2.10",
@@ -15,6 +19,10 @@ dev = [
     "pytest-asyncio>=0.25",
     "mcp>=1.6",
 ]
+
+[project.urls]
+Homepage = "https://mcpwatch.dev/docs"
+Repository = "https://github.com/Lucid-Mobile/mcpwatch-sdk-python"
 
 [build-system]
 requires = ["hatchling"]
