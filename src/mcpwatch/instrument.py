@@ -5,12 +5,12 @@ from __future__ import annotations
 import atexit
 import functools
 import logging
-from typing import Any, TypeVar
+from typing import Any, Callable, TypeVar
 
 from mcpwatch.batcher import EventBatcher
 from mcpwatch.interceptors import wrap_tool_handler, wrap_resource_handler
 from mcpwatch.transport import detect_transport_type
-from mcpwatch.types import EventType, McpWatchEvent
+from mcpwatch.types import EventType, McpWatchEvent, QuotaInfo
 from mcpwatch.utils import generate_id, generate_span_id, generate_trace_id, now_iso
 
 logger = logging.getLogger("mcpwatch")
@@ -70,6 +70,7 @@ def instrument(
     sample_rate: float = 1.0,
     max_batch_size: int = 50,
     flush_interval: float = 1.0,
+    on_quota_warning: Callable[[QuotaInfo], None] | None = None,
 ) -> T:
     """
     Instrument an MCP server for observability.
@@ -85,6 +86,7 @@ def instrument(
         sample_rate: Sampling rate from 0.0 to 1.0
         max_batch_size: Maximum events per batch
         flush_interval: Seconds between batch flushes
+        on_quota_warning: Optional callback invoked when quota is approaching limits
 
     Returns:
         The same server instance, now instrumented
@@ -99,6 +101,7 @@ def instrument(
         debug=debug,
         max_batch_size=max_batch_size,
         flush_interval=flush_interval,
+        on_quota_warning=on_quota_warning,
     )
 
     # Extract server info using multi-attribute lookup
