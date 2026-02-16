@@ -65,7 +65,7 @@ def instrument(
     server: T,
     *,
     api_key: str,
-    endpoint: str = "https://ingest.mcpwatch.dev",
+    endpoint: str = "https://api.mcpwatch.dev",
     debug: bool = False,
     sample_rate: float = 1.0,
     max_batch_size: int = 50,

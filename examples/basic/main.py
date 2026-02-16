@@ -7,7 +7,7 @@ from mcpwatch import instrument
 app = instrument(
     Server("example-weather-server"),
     api_key=os.environ.get("MCPWATCH_API_KEY", ""),
-    endpoint=os.environ.get("MCPWATCH_ENDPOINT", "https://ingest.mcpwatch.dev"),
+    endpoint=os.environ.get("MCPWATCH_ENDPOINT", "https://api.mcpwatch.dev"),
     debug=True,
 )
 

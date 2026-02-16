@@ -14,7 +14,7 @@ from mcpwatch.types import IngestRequest, IngestResponse, McpWatchEvent, QuotaIn
 
 logger = logging.getLogger("mcpwatch")
 
-DEFAULT_ENDPOINT = "https://ingest.mcpwatch.dev"
+DEFAULT_ENDPOINT = "https://api.mcpwatch.dev"
 SDK_NAME = "mcpwatch-python"
 SDK_VERSION = "1.0.0"
 
